@@ -22,6 +22,8 @@ The relationships between classes follow a composition model: an Owner has one o
 Answer:
  Yes — one useful design evolution was adding an optional `dueTime` field to the `Task` class so overdue logic could be automated, and making `Scheduler` explicitly store a scheduling strategy (such as "priority-first" or "earliest-due"). This change improved real-world accuracy for time-sensitive tasks and made the plan explanation richer.
 
+ During implementation, three further refinements emerged. First, a `ScheduledEntry` dataclass was added to pair each scheduled `Task` with its pet's name, so `DailyPlan` could produce meaningful output like "Mochi: Morning walk" rather than a nameless task list. Second, `fitTasksInWindow` was changed to return both the scheduled tasks and the skipped ones as a tuple, because `explainPlan` needs to know what was left out and why. Third, the redundant `exportPlan` method was removed from `Scheduler` since `DailyPlan.toDict()` already covers serialisation — keeping both would have violated the principle that a class should own its own data.
+
 - Additional system design artifact:
 
 ```mermaid
