@@ -5,12 +5,81 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
+Answer: 
+ My initial UML design included five classes: Owner, Pet, Task, Scheduler, and DailyPlan.
+
+
 - What classes did you include, and what responsibilities did you assign to each?
+Answer:
+ Owner holds the pet owner's personal info and their available time for the day, and is responsible for managing the collection of pets they own. Pet stores the animal's basic details and owns a list of care tasks associated with it. Task represents a single care action such as a walk, feeding, or medication dose — each task has a name, category, duration in minutes, and a priority level. Scheduler is the core engine of the app: it takes the owner's time budget and their pets' tasks, sorts and filters them by priority, fits them within the available time, and produces an explained daily plan. Finally, DailyPlan is the output object that holds the scheduled tasks for a given day along with a reasoning summary and total time.
+
+The relationships between classes follow a composition model: an Owner has one or more Pets, and each Pet has zero or more Tasks. The Scheduler depends on Owner to access that data, and produces a DailyPlan which references the selected Task objects.
 
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+Answer:
+ Yes — one useful design evolution was adding an optional `dueTime` field to the `Task` class so overdue logic could be automated, and making `Scheduler` explicitly store a scheduling strategy (such as "priority-first" or "earliest-due"). This change improved real-world accuracy for time-sensitive tasks and made the plan explanation richer.
+
+- Additional system design artifact:
+
+```mermaid
+classDiagram
+    class Owner {
+        - name: string
+        - email: string
+        - availableMinutesPerDay: int
+        + addPet(pet: Pet): void
+        + getPets(): List~Pet~
+        + totalAvailableTime(): int
+    }
+
+    class Pet {
+        - name: string
+        - species: string
+        - age: int
+        + addTask(task: Task): void
+        + getTasks(): List~Task~
+        + totalTaskDuration(): int
+    }
+
+    class Task {
+        - name: string
+        - category: string
+        - durationMinutes: int
+        - priority: int
+        - completed: bool
+        - dueTime: DateTime?
+        + markDone(): void
+        + isOverdue(now: DateTime): bool
+    }
+
+    class Scheduler {
+        - owner: Owner
+        - strategy: string
+        + generateDailyPlan(date: Date): DailyPlan
+        + sortTasksByPriority(tasks: List~Task~): List~Task~
+        + fitTasksInWindow(tasks: List~Task~, availableMinutes: int): List~Task~
+        + explainPlan(plan: DailyPlan): string
+        + exportPlan(plan: DailyPlan): Dictionary
+    }
+
+    class DailyPlan {
+        - date: Date
+        - scheduledTasks: List~Task~
+        - totalTimeUsed: int
+        - reasoning: string
+        + summary(): string
+        + toDict(): Dictionary
+    }
+
+    Owner "1" -- "0..*" Pet : owns
+    Pet "1" -- "0..*" Task : has
+    Scheduler "1" o-- "1" Owner : for
+    Scheduler "1" -- "1" DailyPlan : creates
+    DailyPlan "1" -- "0..*" Task : includes
+```
 
 ---
 
