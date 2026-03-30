@@ -391,7 +391,9 @@ class Scheduler:
                 pet_of[id(copy)] = pet_of[id(task)]
                 expanded.append(copy)
             elif task.recurrence == "weekly":
-                if task.recur_day is not None and plan_date.weekday() == task.recur_day:
+                if task.recur_day is None:
+                    print(f"  WARNING: weekly task '{task.name}' has no recur_day set — skipped.")
+                elif plan_date.weekday() == task.recur_day:
                     copy = replace(task, is_complete=False)
                     pet_of[id(copy)] = pet_of[id(task)]
                     expanded.append(copy)

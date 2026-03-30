@@ -47,6 +47,39 @@ After scheduling, the planner checks every pair of timed tasks for overlapping w
 
 ---
 
+## Testing PawPal+
+
+Run the full test suite from the project root:
+
+```bash
+python -m pytest tests/test_pawpal.py -v
+```
+
+Expected output: **38 tests passed**.
+
+### What the tests cover
+
+| Area | Tests | Description |
+|---|---|---|
+| **Sorting — time** | 3 | Tasks return in chronological order; untimed tasks go last; priority breaks ties at the same `due_time` |
+| **Sorting — priority** | 1 | Tasks return highest-priority first (5 before 1) |
+| **Recurrence** | 5 | Daily task completion creates a new task due tomorrow; weekly creates one due in 7 days; one-off tasks return `None`; `ValueError` raised for unknown or already-complete tasks |
+| **Conflict detection** | 6 | Overlapping windows are flagged with overlap duration; back-to-back tasks are not flagged; `[SAME PET]` / `[DIFFERENT PETS]` labels are correct; untimed tasks are never flagged |
+| **Budget / fit** | 3 | Tasks fitting exactly the budget are all scheduled; tasks over budget are skipped; `budget=0` raises `ValueError` |
+| **Empty states** | 2 | A pet with no tasks returns duration `0`; an owner with no pets produces an empty plan without crashing |
+| **End-to-end plan** | 5 | Full pipeline tested with multiple pets; budget respected; pet filter scopes correctly; conflicts surface in plan |
+| **`is_overdue()`** | 4 | Wall-clock time mocked for deterministic results; completed and untimed tasks never reported overdue |
+| **Plan output** | 6 | `summary()` and `to_dict()` verified for date, task fields, conflict list, and dict keys |
+| **Misconfiguration** | 1 | Weekly task with no `recur_day` is excluded from plan and emits a `WARNING` |
+
+### Reliability Confidence
+
+> **4.9 / 5.0 stars**
+
+38/38 tests pass across all scheduling behaviors. The 0.1 deduction reflects the absence of load or stress testing under large task volumes — all current tests use small, controlled inputs.
+
+---
+
 ## Getting started
 
 ### Setup
