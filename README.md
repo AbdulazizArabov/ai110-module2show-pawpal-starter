@@ -5,15 +5,12 @@
 
 ---
 
-## 📸 Demo
+## 📸 Screenshots
 
-<a href="/course_images/ai110/Screenshots/display_project.png" target="_blank"><img src='/course_images/ai110/Screenshots/display_project.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
-
-## 🎬 Demo Video
-
-> **[▶ Download / Watch Demo Video](https://github.com/AbdulazizArabov/ai110-module2show-pawpal-starter/releases/download/v1.0/Screen.Recording.2026-03-29.230232.mp4)**
->
-> *(hosted as a GitHub Release asset — click to download and play locally)*
+| | |
+|---|---|
+| ![PawPal App](Screenshots/display_project.png) | ![Screenshot 43](Screenshots/Screenshot%20(43).png) |
+| ![Screenshot 44](Screenshots/Screenshot%20(44).png) | ![Screenshot 45](Screenshots/Screenshot%20(45).png) |
 
 ---
 
