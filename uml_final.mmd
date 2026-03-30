@@ -1,0 +1,73 @@
+classDiagram
+    class Owner {
+        - name: string
+        - email: string
+        - availableMinutesPerDay: int
+        - _pets: List~Pet~
+        + add_pet(pet: Pet): void
+        + get_pets(): List~Pet~
+        + get_available_time(): int
+    }
+
+    class Pet {
+        - name: string
+        - species: string
+        - age: int
+        - tasks: List~Task~
+        + add_task(task: Task): void
+        + get_tasks(): List~Task~
+        + total_duration(): int
+    }
+
+    class Task {
+        - name: string
+        - category: string
+        - duration_minutes: int
+        - priority: int
+        - is_complete: bool
+        - due_time: string
+        - recurrence: string
+        - recur_day: int
+        - due_date: date
+        + due_minutes: int
+        + mark_done(): void
+        + is_overdue(): bool
+        + next_occurrence(from_date: date): Task
+    }
+
+    class ScheduledEntry {
+        - pet_name: string
+        - task: Task
+    }
+
+    class Scheduler {
+        - owner: Owner
+        - strategy: string
+        + generate_plan(pet_name_filter, include_complete): DailyPlan
+        + mark_task_complete(task_name, pet): Task
+        + sort_by_priority(tasks: List~Task~): List~Task~
+        + sort_by_time(tasks: List~Task~): List~Task~
+        + filter_tasks(pet_name, is_complete): List~Task~
+        + expand_recurring(tasks, pet_of, plan_date): List~Task~
+        + fit_tasks(tasks, budget): tuple
+        + detect_conflicts(entries): List~string~
+        + warn_conflicts(conflicts): void
+        + explain_reasoning(scheduled, skipped): string
+    }
+
+    class DailyPlan {
+        - plan_date: date
+        - scheduled_entries: List~ScheduledEntry~
+        - total_time_used: int
+        - reasoning: string
+        - conflicts: List~string~
+        + summary(): string
+        + to_dict(): Dictionary
+    }
+
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+    Scheduler "1" o-- "1" Owner : references
+    Scheduler "1" ..> "1" DailyPlan : creates
+    DailyPlan "1" *-- "0..*" ScheduledEntry : contains
+    ScheduledEntry "1" --> "1" Task : wraps

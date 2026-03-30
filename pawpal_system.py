@@ -1,7 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Optional
+import json
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +64,25 @@ class Task:
         dt = datetime.strptime(self.due_time, "%H:%M")
         return dt.hour * 60 + dt.minute
 
+    @property
+    def priority_label(self) -> str:
+        """
+        Return a human-readable, emoji-coded priority label.
+
+        Mapping:
+          4–5  →  🔴 High
+          3    →  🟡 Medium
+          1–2  →  🟢 Low
+
+        Used by the UI to colour-code task tables without any presentation
+        logic leaking into the scheduler or plan objects.
+        """
+        if self.priority >= 4:
+            return "🔴 High"
+        if self.priority == 3:
+            return "🟡 Medium"
+        return "🟢 Low"
+
     def is_overdue(self) -> bool:
         """
         Return True if the task has a due_time, is not complete,
@@ -121,6 +142,107 @@ class Owner:
     def get_available_time(self) -> int:
         """Return the owner's daily time budget in minutes."""
         return self.available_minutes_per_day
+
+    # ------------------------------------------------------------------
+    # Persistence helpers (private)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _task_to_dict(task: Task) -> dict:
+        return {
+            "name":             task.name,
+            "category":         task.category,
+            "duration_minutes": task.duration_minutes,
+            "priority":         task.priority,
+            "is_complete":      task.is_complete,
+            "due_time":         task.due_time,
+            "recurrence":       task.recurrence,
+            "recur_day":        task.recur_day,
+            "due_date":         task.due_date.isoformat() if task.due_date else None,
+        }
+
+    @staticmethod
+    def _task_from_dict(d: dict) -> Task:
+        return Task(
+            name=d["name"],
+            category=d["category"],
+            duration_minutes=d["duration_minutes"],
+            priority=d["priority"],
+            is_complete=d.get("is_complete", False),
+            due_time=d.get("due_time"),
+            recurrence=d.get("recurrence"),
+            recur_day=d.get("recur_day"),
+            due_date=date.fromisoformat(d["due_date"]) if d.get("due_date") else None,
+        )
+
+    @staticmethod
+    def _pet_to_dict(pet: Pet) -> dict:
+        return {
+            "name":    pet.name,
+            "species": pet.species,
+            "age":     pet.age,
+            "tasks":   [Owner._task_to_dict(t) for t in pet.get_tasks()],
+        }
+
+    @staticmethod
+    def _pet_from_dict(d: dict) -> Pet:
+        pet = Pet(name=d["name"], species=d["species"], age=d["age"])
+        for t_dict in d.get("tasks", []):
+            pet.add_task(Owner._task_from_dict(t_dict))
+        return pet
+
+    # ------------------------------------------------------------------
+    # Public persistence API
+    # ------------------------------------------------------------------
+
+    def save_to_json(self, path: str | Path = "data.json") -> None:
+        """
+        Serialise this Owner (including all pets and their tasks) to a
+        JSON file at *path*.
+
+        The file is written atomically via a temporary sibling so a
+        crash mid-write never leaves a truncated file.  All Python
+        date objects are stored as ISO-8601 strings ("YYYY-MM-DD").
+
+        Args:
+            path: Destination file path.  Defaults to "data.json" in
+                  the current working directory.
+        """
+        payload = {
+            "name":                     self.name,
+            "email":                    self.email,
+            "available_minutes_per_day": self.available_minutes_per_day,
+            "pets": [self._pet_to_dict(p) for p in self._pets],
+        }
+        target = Path(path)
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(target)
+
+    @classmethod
+    def load_from_json(cls, path: str | Path = "data.json") -> Owner:
+        """
+        Deserialise an Owner from a JSON file previously written by
+        save_to_json().
+
+        Raises FileNotFoundError if the file does not exist (caller
+        should catch and fall back to a default Owner).
+
+        Args:
+            path: Source file path.  Defaults to "data.json".
+
+        Returns:
+            A fully reconstructed Owner with all pets and tasks.
+        """
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        owner = cls(
+            name=data["name"],
+            email=data.get("email", ""),
+            available_minutes_per_day=data["available_minutes_per_day"],
+        )
+        for p_dict in data.get("pets", []):
+            owner.add_pet(cls._pet_from_dict(p_dict))
+        return owner
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +388,8 @@ class Scheduler:
         # Step 3 — sort
         if self.strategy == "time-first":
             sorted_tasks = self.sort_by_time(all_tasks)
+        elif self.strategy == "priority-time":
+            sorted_tasks = self.sort_by_priority_then_time(all_tasks)
         else:
             sorted_tasks = self.sort_by_priority(all_tasks)
 
@@ -297,6 +421,35 @@ class Scheduler:
     def sort_by_priority(self, tasks: list[Task]) -> list[Task]:
         """Return a new list of tasks sorted by priority descending (5 first)."""
         return sorted(tasks, key=lambda t: t.priority, reverse=True)
+
+    def sort_by_priority_then_time(self, tasks: list[Task]) -> list[Task]:
+        """
+        Sort tasks by priority descending first, then by due_minutes ascending
+        as a tiebreaker within each priority band.
+
+        This combines the two existing strategies:
+          - Primary key:   -priority   (highest priority first)
+          - Secondary key:  due_minutes (earliest deadline first within a band)
+
+        Tasks with no due_time receive float("inf") as their time key so they
+        fall to the end of their priority band, consistent with sort_by_time.
+
+        Example ordering for mixed tasks:
+          🔴 High  @ 09:00  →  1st   (P5, earliest in band)
+          🔴 High  @ 14:00  →  2nd   (P5, later in band)
+          🟡 Medium @ 08:00  →  3rd   (P3, time ignored until priority resolved)
+          🟢 Low   (untimed) →  4th
+
+        Args:
+            tasks: Unsorted list of Task objects.
+
+        Returns:
+            A new list sorted priority-then-time, untimed tasks last within band.
+        """
+        return sorted(
+            tasks,
+            key=lambda t: (-t.priority, t.due_minutes or float("inf")),
+        )
 
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """
@@ -463,21 +616,70 @@ class Scheduler:
         self, tasks: list[Task], budget: int
     ) -> tuple[list[Task], list[Task]]:
         """
-        Greedily select tasks that fit within budget (minutes).
-        Returns (scheduled, skipped).
-        Raises ValueError if budget <= 0.
+        Select the subset of tasks that maximises total priority score
+        within budget using the 0/1 knapsack dynamic-programming algorithm.
+
+        Why knapsack instead of greedy:
+          A greedy approach locks in each task the moment it fits and can
+          fill the budget with lower-priority tasks, leaving no room for a
+          short high-priority task that appears later.  Knapsack considers
+          every possible subset and returns the provably optimal selection.
+
+        Complexity:
+          Time:  O(n × budget)  — n tasks, each examined once per minute
+          Space: O(n × budget)  — 2-D table for clean reconstruction
+          For typical inputs (n ≤ 50, budget ≤ 480 min) this is < 25 000
+          cells and runs in well under 1 ms.
+
+        Algorithm:
+          1. Build dp[i][w] = max priority achievable using the first i
+             tasks with exactly w minutes or fewer available.
+          2. Reconstruct the selected set by walking the table backwards:
+             if dp[i][w] ≠ dp[i-1][w], task i was included.
+          3. Return scheduled tasks in their original (sorted) order so the
+             output respects the caller's chosen strategy.
+
+        Args:
+            tasks:  Pre-sorted list of Task objects (sort order is preserved
+                    in the output but does not affect which tasks are chosen).
+            budget: Available minutes (must be > 0).
+
+        Returns:
+            (scheduled, skipped) — two lists that together contain every
+            input task exactly once.
+
+        Raises:
+            ValueError if budget <= 0.
         """
         if budget <= 0:
             raise ValueError(f"Budget must be > 0, got {budget}.")
-        scheduled: list[Task] = []
-        skipped: list[Task] = []
-        time_used = 0
-        for task in tasks:
-            if time_used + task.duration_minutes <= budget:
-                scheduled.append(task)
-                time_used += task.duration_minutes
-            else:
-                skipped.append(task)
+
+        n = len(tasks)
+        if n == 0:
+            return [], []
+
+        # Build DP table
+        dp = [[0] * (budget + 1) for _ in range(n + 1)]
+        for i, task in enumerate(tasks, 1):
+            dur = task.duration_minutes
+            for w in range(budget + 1):
+                dp[i][w] = dp[i - 1][w]
+                if w >= dur:
+                    take = dp[i - 1][w - dur] + task.priority
+                    if take > dp[i][w]:
+                        dp[i][w] = take
+
+        # Reconstruct selected indices (0-based)
+        selected: set[int] = set()
+        w = budget
+        for i in range(n, 0, -1):
+            if dp[i][w] != dp[i - 1][w]:
+                selected.add(i - 1)
+                w -= tasks[i - 1].duration_minutes
+
+        # Preserve incoming sort order
+        scheduled = [t for idx, t in enumerate(tasks) if idx in selected]
+        skipped   = [t for idx, t in enumerate(tasks) if idx not in selected]
         return scheduled, skipped
 
     def explain_reasoning(
@@ -503,3 +705,66 @@ class Scheduler:
                 )
 
         return "\n".join(lines)
+
+    def suggest_slot(
+        self,
+        duration_minutes: int,
+        entries: list[ScheduledEntry],
+        search_from: Optional[int] = None,
+        day_end: int = 1439,
+    ) -> Optional[str]:
+        """
+        Find the earliest gap in the day that can fit a task of duration_minutes
+        without overlapping any already-scheduled timed entries.
+
+        Algorithm (gap sweep):
+          1. Collect occupied windows [(start_min, end_min)] from entries
+             that have a due_time.  Untimed entries are ignored.
+          2. Establish a cursor at search_from (default 0 = midnight).
+          3. Sort windows by start_min, then scan consecutive pairs.
+             For each window: if a gap of >= duration_minutes exists between
+             the cursor and the window's start, return the cursor as "HH:MM".
+             Otherwise advance the cursor to the window's end.
+          4. After all windows, check the trailing gap to day_end.
+          5. Return None if no gap fits.
+
+        Args:
+            duration_minutes: Length of the task to place (minutes > 0).
+            entries:          Scheduled entries already in the plan.
+            search_from:      Earliest minute to consider (0–1439).
+                              Defaults to 0 (00:00) when None.
+            day_end:          Last minute of the planning day (default 1439 = 23:59).
+
+        Returns:
+            "HH:MM" string of the earliest available slot, or None.
+
+        Raises:
+            ValueError if duration_minutes <= 0.
+        """
+        if duration_minutes <= 0:
+            raise ValueError(f"duration_minutes must be > 0, got {duration_minutes}.")
+
+        cursor = search_from if search_from is not None else 0
+
+        # Collect and sort occupied windows for timed entries only
+        windows: list[tuple[int, int]] = []
+        for e in entries:
+            start = e.task.due_minutes
+            if start is None:
+                continue
+            windows.append((start, start + e.task.duration_minutes))
+        windows.sort(key=lambda w: w[0])
+
+        # Sweep gaps
+        for start, end in windows:
+            if start > cursor and start - cursor >= duration_minutes:
+                hours, mins = divmod(cursor, 60)
+                return f"{hours:02d}:{mins:02d}"
+            cursor = max(cursor, end)
+
+        # Check trailing gap after last window
+        if day_end - cursor >= duration_minutes:
+            hours, mins = divmod(cursor, 60)
+            return f"{hours:02d}:{mins:02d}"
+
+        return None

@@ -86,6 +86,81 @@ class TestSortByPriority:
         assert [t.priority for t in result] == [5, 3, 2]
 
 
+class TestPriorityLabel:
+    def test_high_label_for_priority_5(self):
+        t = Task(name="Meds", category="meds", duration_minutes=5, priority=5)
+        assert t.priority_label == "🔴 High"
+
+    def test_high_label_for_priority_4(self):
+        t = Task(name="Walk", category="walk", duration_minutes=20, priority=4)
+        assert t.priority_label == "🔴 High"
+
+    def test_medium_label_for_priority_3(self):
+        t = Task(name="Feed", category="feeding", duration_minutes=10, priority=3)
+        assert t.priority_label == "🟡 Medium"
+
+    def test_low_label_for_priority_2(self):
+        t = Task(name="Groom", category="grooming", duration_minutes=15, priority=2)
+        assert t.priority_label == "🟢 Low"
+
+    def test_low_label_for_priority_1(self):
+        t = Task(name="Play", category="play", duration_minutes=10, priority=1)
+        assert t.priority_label == "🟢 Low"
+
+
+class TestSortByPriorityThenTime:
+    def test_higher_priority_comes_first_regardless_of_time(self):
+        """A P3 task at 07:00 must come after a P5 task at 18:00."""
+        early_low  = Task(name="Early-Low",  category="walk", duration_minutes=10, priority=3, due_time="07:00")
+        late_high  = Task(name="Late-High",  category="meds", duration_minutes=10, priority=5, due_time="18:00")
+
+        result = Scheduler(make_owner()).sort_by_priority_then_time([early_low, late_high])
+        assert result[0].name == "Late-High"
+
+    def test_same_priority_sorted_by_time(self):
+        """Within the same priority band, earliest due_time comes first."""
+        t1 = Task(name="Afternoon", category="walk", duration_minutes=10, priority=4, due_time="14:00")
+        t2 = Task(name="Morning",   category="walk", duration_minutes=10, priority=4, due_time="08:00")
+        t3 = Task(name="Evening",   category="walk", duration_minutes=10, priority=4, due_time="18:00")
+
+        result = Scheduler(make_owner()).sort_by_priority_then_time([t1, t2, t3])
+        assert [t.due_time for t in result] == ["08:00", "14:00", "18:00"]
+
+    def test_untimed_tasks_last_in_band(self):
+        """Untimed tasks fall to the end of their priority band."""
+        timed   = Task(name="Timed",   category="walk", duration_minutes=10, priority=4, due_time="09:00")
+        untimed = Task(name="Untimed", category="play", duration_minutes=10, priority=4)
+
+        result = Scheduler(make_owner()).sort_by_priority_then_time([untimed, timed])
+        assert result[0].name == "Timed"
+        assert result[1].name == "Untimed"
+
+    def test_mixed_priorities_and_times(self):
+        """Full ordering: P5@14:00 → P5@untimed → P3@07:00 → P1@06:00."""
+        p5_late    = Task(name="P5-late",    category="meds",    duration_minutes=5,  priority=5, due_time="14:00")
+        p5_untimed = Task(name="P5-untimed", category="grooming",duration_minutes=15, priority=5)
+        p3_early   = Task(name="P3-early",   category="walk",    duration_minutes=20, priority=3, due_time="07:00")
+        p1_veryearly = Task(name="P1-very-early", category="play", duration_minutes=10, priority=1, due_time="06:00")
+
+        result = Scheduler(make_owner()).sort_by_priority_then_time(
+            [p3_early, p5_untimed, p1_veryearly, p5_late]
+        )
+        assert [t.name for t in result] == ["P5-late", "P5-untimed", "P3-early", "P1-very-early"]
+
+    def test_generate_plan_uses_priority_time_strategy(self):
+        """Scheduler with strategy='priority-time' produces correctly ordered entries."""
+        owner = make_owner(minutes=120)
+        pet = make_pet()
+        pet.add_task(Task(name="EarlyLow",  category="walk",    duration_minutes=10, priority=2, due_time="06:00"))
+        pet.add_task(Task(name="LateHigh",  category="meds",    duration_minutes=10, priority=5, due_time="20:00"))
+        pet.add_task(Task(name="MidMedium", category="feeding", duration_minutes=10, priority=3, due_time="12:00"))
+        owner.add_pet(pet)
+
+        plan = Scheduler(owner, strategy="priority-time").generate_plan()
+        names = [e.task.name for e in plan.scheduled_entries]
+        assert names == ["LateHigh", "MidMedium", "EarlyLow"]
+
+
 # ---------------------------------------------------------------------------
 # 2. Recurrence Logic
 # ---------------------------------------------------------------------------
@@ -256,6 +331,40 @@ class TestFitTasks:
 
         assert scheduled == []
         assert len(skipped) == 1
+
+    def test_knapsack_beats_greedy(self):
+        """
+        Knapsack finds the optimal subset where greedy would fail.
+
+        Budget = 50 min.
+        Greedy (priority-first order) takes P5@40 min, leaving 10 min —
+        neither P3@25 fits. Total priority = 5.
+
+        Knapsack skips P5@40 and takes P3@25 + P3@25 = 50 min exactly.
+        Total priority = 6 — strictly better.
+        """
+        p5_long = Task(name="Long-High",  category="walk",    duration_minutes=40, priority=5)
+        p3_a    = Task(name="Medium-A",   category="feeding", duration_minutes=25, priority=3)
+        p3_b    = Task(name="Medium-B",   category="meds",    duration_minutes=25, priority=3)
+
+        scheduler = Scheduler(make_owner(minutes=50))
+        # Pass in priority-first order (as generate_plan would)
+        scheduled, skipped = scheduler.fit_tasks([p5_long, p3_a, p3_b], budget=50)
+
+        scheduled_names = {t.name for t in scheduled}
+        assert scheduled_names == {"Medium-A", "Medium-B"}
+        assert sum(t.priority for t in scheduled) == 6  # beats greedy's 5
+
+    def test_knapsack_preserves_sort_order_in_output(self):
+        """Scheduled tasks come back in the same order they were passed in."""
+        t1 = Task(name="First",  category="walk",    duration_minutes=20, priority=4)
+        t2 = Task(name="Second", category="feeding", duration_minutes=20, priority=3)
+        t3 = Task(name="Third",  category="meds",    duration_minutes=20, priority=5)
+
+        scheduler = Scheduler(make_owner(minutes=60))
+        scheduled, _ = scheduler.fit_tasks([t1, t2, t3], budget=60)
+
+        assert [t.name for t in scheduled] == ["First", "Second", "Third"]
 
     def test_zero_budget_raises(self):
         scheduler = Scheduler(make_owner(minutes=1))
@@ -448,3 +557,84 @@ class TestWeeklyMisconfiguration:
         assert plan.total_time_used == 0          # task was not scheduled
         assert "WARNING" in captured.out          # warning was printed
         assert "Bath" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# 10. suggest_slot — next available gap finder
+# ---------------------------------------------------------------------------
+
+class TestSuggestSlot:
+    def _entry(self, pet_name, task_name, due_time, duration) -> ScheduledEntry:
+        task = Task(name=task_name, category="walk", duration_minutes=duration,
+                    priority=3, due_time=due_time)
+        return ScheduledEntry(pet_name=pet_name, task=task)
+
+    def test_empty_schedule_returns_midnight(self):
+        """No existing tasks — slot starts at 00:00."""
+        result = Scheduler(make_owner()).suggest_slot(30, [])
+        assert result == "00:00"
+
+    def test_gap_before_first_task(self):
+        """60-min gap before 08:00 task fits a 30-min task at 00:00."""
+        e = self._entry("Mochi", "Walk", "08:00", 30)
+        result = Scheduler(make_owner()).suggest_slot(30, [e])
+        assert result == "00:00"
+
+    def test_gap_between_two_tasks(self):
+        """60-min gap between task-end and next task-start fits a 45-min task."""
+        e1 = self._entry("Mochi", "Walk", "00:00", 30)   # 00:00–00:30
+        e2 = self._entry("Mochi", "Feed", "01:30", 30)   # 01:30–02:00
+        # Gap 00:30–01:30 = 60 min → fits 45 min
+        result = Scheduler(make_owner()).suggest_slot(45, [e1, e2])
+        assert result == "00:30"
+
+    def test_gap_too_small_skips_to_next(self):
+        """15-min gap is too small for 20-min task — algorithm skips to next gap."""
+        e1 = self._entry("Mochi", "Walk", "00:00", 30)   # 00:00–00:30
+        e2 = self._entry("Mochi", "Feed", "00:45", 60)   # 00:45–01:45
+        # Gap 00:30–00:45 = 15 min (too small). Next gap starts at 01:45.
+        result = Scheduler(make_owner()).suggest_slot(20, [e1, e2])
+        assert result == "01:45"
+
+    def test_no_gap_returns_none(self):
+        """Tasks fill 00:00 through 23:59 — no room for anything."""
+        e = self._entry("Mochi", "Marathon", "00:00", 1439)
+        result = Scheduler(make_owner()).suggest_slot(1, [e], day_end=1439)
+        assert result is None
+
+    def test_search_from_skips_early_gap(self):
+        """search_from=540 (09:00) ignores the 00:00 gap, finds slot after first task."""
+        e = self._entry("Mochi", "Walk", "09:30", 30)    # 09:30–10:00
+        result = Scheduler(make_owner()).suggest_slot(20, [e], search_from=540)
+        assert result == "09:00"
+
+    def test_trailing_gap_at_end_of_day(self):
+        """Single task ends at 22:00 — trailing gap fits a 60-min task."""
+        e = self._entry("Mochi", "Walk", "00:00", 22 * 60)  # 00:00–22:00
+        result = Scheduler(make_owner()).suggest_slot(60, [e])
+        assert result == "22:00"
+
+    def test_exact_fit_is_accepted(self):
+        """A gap exactly equal to duration_minutes is returned, not skipped."""
+        e1 = self._entry("Mochi", "A", "00:00", 30)   # 00:00–00:30
+        e2 = self._entry("Mochi", "B", "01:00", 30)   # 01:00–01:30
+        # Gap 00:30–01:00 = exactly 30 min → should be returned
+        result = Scheduler(make_owner()).suggest_slot(30, [e1, e2])
+        assert result == "00:30"
+
+    def test_untimed_entries_are_ignored(self):
+        """Entries without due_time don't block any slot."""
+        e = self._entry("Mochi", "Groom", None, 60)
+        result = Scheduler(make_owner()).suggest_slot(30, [e])
+        assert result == "00:00"
+
+    def test_result_is_hhmm_format(self):
+        """Return value always matches HH:MM pattern."""
+        import re
+        result = Scheduler(make_owner()).suggest_slot(30, [])
+        assert re.match(r"^\d{2}:\d{2}$", result)
+
+    def test_zero_duration_raises(self):
+        """ValueError raised when duration_minutes is 0."""
+        with pytest.raises(ValueError):
+            Scheduler(make_owner()).suggest_slot(0, [])

@@ -5,24 +5,26 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
-Answer: 
- My initial UML design included five classes: Owner, Pet, Task, Scheduler, and DailyPlan.
 
+Five classes: `Owner`, `Pet`, `Task`, `Scheduler`, and `DailyPlan`. Owner manages pets, each pet owns tasks, Scheduler reads the owner's budget and produces a DailyPlan.
 
 - What classes did you include, and what responsibilities did you assign to each?
-Answer:
- Owner holds the pet owner's personal info and their available time for the day, and is responsible for managing the collection of pets they own. Pet stores the animal's basic details and owns a list of care tasks associated with it. Task represents a single care action such as a walk, feeding, or medication dose — each task has a name, category, duration in minutes, and a priority level. Scheduler is the core engine of the app: it takes the owner's time budget and their pets' tasks, sorts and filters them by priority, fits them within the available time, and produces an explained daily plan. Finally, DailyPlan is the output object that holds the scheduled tasks for a given day along with a reasoning summary and total time.
 
-The relationships between classes follow a composition model: an Owner has one or more Pets, and each Pet has zero or more Tasks. The Scheduler depends on Owner to access that data, and produces a DailyPlan which references the selected Task objects.
+| Class | Responsibility |
+|---|---|
+| `Owner` | Stores profile + daily time budget; holds the pet list |
+| `Pet` | Stores animal info; owns a list of care tasks |
+| `Task` | Represents one care action with name, category, duration, and priority |
+| `Scheduler` | Sorts, filters, and fits tasks within the budget; produces a plan |
+| `DailyPlan` | Output object: scheduled entries, total time, reasoning, conflicts |
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
-Answer:
- Yes — one useful design evolution was adding an optional `dueTime` field to the `Task` class so overdue logic could be automated, and making `Scheduler` explicitly store a scheduling strategy (such as "priority-first" or "earliest-due"). This change improved real-world accuracy for time-sensitive tasks and made the plan explanation richer.
+Yes — three refinements emerged during implementation:
 
- During implementation, three further refinements emerged. First, a `ScheduledEntry` dataclass was added to pair each scheduled `Task` with its pet's name, so `DailyPlan` could produce meaningful output like "Mochi: Morning walk" rather than a nameless task list. Second, `fitTasksInWindow` was changed to return both the scheduled tasks and the skipped ones as a tuple, because `explainPlan` needs to know what was left out and why. Third, the redundant `exportPlan` method was removed from `Scheduler` since `DailyPlan.toDict()` already covers serialisation — keeping both would have violated the principle that a class should own its own data.
+1. **`ScheduledEntry` added** — pairs a scheduled `Task` with its pet name so the plan can say "Mochi: Morning walk" instead of a nameless task.
+2. **`fit_tasks` returns a tuple** — returning `(scheduled, skipped)` instead of just the scheduled list lets `explain_reasoning` describe what was left out and why.
+3. **`exportPlan` removed from `Scheduler`** — `DailyPlan.to_dict()` already handles serialisation. Keeping both would violate single responsibility.
 
 - Additional system design artifact:
 
@@ -32,55 +34,79 @@ classDiagram
         - name: string
         - email: string
         - availableMinutesPerDay: int
-        + addPet(pet: Pet): void
-        + getPets(): List~Pet~
-        + totalAvailableTime(): int
+        - _pets: List~Pet~
+        + add_pet(pet: Pet): void
+        + get_pets(): List~Pet~
+        + get_available_time(): int
+        + save_to_json(path: string): void
+        + load_from_json(path: string): Owner
     }
 
     class Pet {
         - name: string
         - species: string
         - age: int
-        + addTask(task: Task): void
-        + getTasks(): List~Task~
-        + totalTaskDuration(): int
+        - tasks: List~Task~
+        + add_task(task: Task): void
+        + get_tasks(): List~Task~
+        + total_duration(): int
     }
 
     class Task {
         - name: string
         - category: string
-        - durationMinutes: int
+        - duration_minutes: int
         - priority: int
-        - completed: bool
-        - dueTime: DateTime?
-        + markDone(): void
-        + isOverdue(now: DateTime): bool
+        - is_complete: bool
+        - due_time: string
+        - recurrence: string
+        - recur_day: int
+        - due_date: date
+        + due_minutes: int
+        + priority_label: string
+        + mark_done(): void
+        + is_overdue(): bool
+        + next_occurrence(from_date: date): Task
+    }
+
+    class ScheduledEntry {
+        - pet_name: string
+        - task: Task
     }
 
     class Scheduler {
         - owner: Owner
         - strategy: string
-        + generateDailyPlan(date: Date): DailyPlan
-        + sortTasksByPriority(tasks: List~Task~): List~Task~
-        + fitTasksInWindow(tasks: List~Task~, availableMinutes: int): List~Task~
-        + explainPlan(plan: DailyPlan): string
-        + exportPlan(plan: DailyPlan): Dictionary
+        + generate_plan(pet_name_filter, include_complete): DailyPlan
+        + mark_task_complete(task_name, pet): Task
+        + sort_by_priority(tasks: List~Task~): List~Task~
+        + sort_by_priority_then_time(tasks: List~Task~): List~Task~
+        + sort_by_time(tasks: List~Task~): List~Task~
+        + filter_tasks(pet_name, is_complete): List~Task~
+        + expand_recurring(tasks, pet_of, plan_date): List~Task~
+        + fit_tasks(tasks, budget): tuple
+        + detect_conflicts(entries): List~string~
+        + warn_conflicts(conflicts): void
+        + explain_reasoning(scheduled, skipped): string
+        + suggest_slot(duration_minutes, entries, search_from, day_end): string
     }
 
     class DailyPlan {
-        - date: Date
-        - scheduledTasks: List~Task~
-        - totalTimeUsed: int
+        - plan_date: date
+        - scheduled_entries: List~ScheduledEntry~
+        - total_time_used: int
         - reasoning: string
+        - conflicts: List~string~
         + summary(): string
-        + toDict(): Dictionary
+        + to_dict(): Dictionary
     }
 
-    Owner "1" -- "0..*" Pet : owns
-    Pet "1" -- "0..*" Task : has
-    Scheduler "1" o-- "1" Owner : for
-    Scheduler "1" -- "1" DailyPlan : creates
-    DailyPlan "1" -- "0..*" Task : includes
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+    Scheduler "1" o-- "1" Owner : references
+    Scheduler "1" ..> "1" DailyPlan : creates
+    DailyPlan "1" *-- "0..*" ScheduledEntry : contains
+    ScheduledEntry "1" --> "1" Task : wraps
 ```
 
 ---
@@ -89,31 +115,18 @@ classDiagram
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+Four constraints, in order of importance:
 
-Answer:
- The scheduler juggles four main constraints. The first and most important is the owner's time budget — whatever number of minutes Jordan has available that day is a hard ceiling. No task gets squeezed in halfway; if it doesn't fit, it gets skipped entirely. That felt like the right call because real life doesn't let you half-walk a dog.
-
- The second constraint is priority. Every task gets a score from 1 to 5, and the scheduler respects that order when deciding what makes the cut. This matters because not all pet care is equal — a missed medication is genuinely harmful, while skipping playtime is just a little sad.
-
- Third is the deadline, which is the `due_time` field on each task. When the strategy is set to "time-first," the scheduler uses Earliest Deadline First — tasks with the closest due time go first, and tasks with no due time at all float to the bottom. This was added because two priority-5 tasks can still conflict if one needs to happen at 8am and the other at 5pm.
-
- Finally, completion status acts as a filter. Tasks already marked done are silently skipped by default, so the budget isn't wasted on things the owner already handled.
-
- The order those constraints were added actually mirrors how important they are. Time came first because it's the only truly non-negotiable one. Priority came next because care tasks aren't interchangeable. Deadlines came after that as a finer-grained version of priority. And completion status was the last piece — more of a cleanup rule than a real ranking.
+1. **Time budget** — hard ceiling. If a task doesn't fit, it's skipped entirely. You can't half-walk a dog.
+2. **Priority (1–5)** — determines which tasks the knapsack values most. Missed meds matter more than missed playtime.
+3. **Deadline (`due_time`)** — used by `time-first` and `priority-time` strategies to order within a budget band.
+4. **Completion status** — already-done tasks are filtered out by default so the budget isn't wasted.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+`fit_tasks` uses 0/1 knapsack, which maximises total priority score — not individual task rank. That means a P5 task can be skipped if two P3 tasks together score higher and fit the budget. Example: budget=50 min, P5@40 + P3@25 + P3@25. Knapsack picks P3+P3 (score 6) over P5 alone (score 5).
 
-Answer:
- The biggest tradeoff is that `fit_tasks` is greedy — it works down the sorted list and locks in each task the moment it fits, without ever looking ahead. That means it can fill the budget with several medium-length tasks and then have no room left for a short but important one that appears later in the list.
-
- For example, if three 25-minute tasks consume 75 of Jordan's 90 available minutes, a 20-minute high-priority task that comes next gets skipped — even though swapping one of the earlier tasks out would have made room for it.
-
- That said, the tradeoff is reasonable here for two reasons. First, the list is already sorted by priority before any fitting happens, so the tasks most likely to be important are considered first. The greedy approach only causes a problem when priorities are close together, which is the exception rather than the rule in a typical pet care day. Second, the alternative — trying every possible combination to find the optimal set — gets computationally expensive fast and adds complexity that would be hard to explain to a user. For a daily pet care planner, "good enough, fast, and transparent" beats "perfect but slow."
+This is reasonable because the goal is the best *day* overall, not guaranteeing any single task. Skipped tasks are always shown with the reasoning output so the owner can adjust priorities or the budget.
 
 ---
 
@@ -121,13 +134,22 @@ Answer:
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+- **Phase 1 (design):** Brainstormed class responsibilities and relationships. The five-class skeleton came out of one focused conversation.
+- **Phase 2 (implementation):** Described method behavior in plain English, reviewed the generated code against my own understanding.
+- **Phase 3 (testing):** AI structured edge cases into a coherent suite and caught two gaps I'd missed — the `is_overdue()` clock dependency and the `weekly` task with no `recur_day`.
+
+Most useful prompt pattern: specific + code-grounded. "Given this signature, what inputs would make it fail silently?" beat "how should I structure this?" every time.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+The AI initially put `exportPlan` on `Scheduler`. I removed it — `DailyPlan.to_dict()` already handled serialisation, and keeping both would have created a sync risk. I verified by tracing `generate_plan()` and confirming no caller needed a separate export path.
+
+**c. VS Code Copilot experience**
+
+- **Most effective features:** Inline completions for repetitive structure (`@dataclass` fields, `__init__` params); chat with `#file` context for auditing the UML against the actual code.
+- **Suggestion I modified:** `sort_by_time` used a single `due_minutes` key — non-deterministic on ties. I changed it to `(due_minutes or float("inf"), -priority)` and verified with `test_same_time_tiebreak_by_priority`.
+- **Separate sessions:** Each phase had a clean, focused context. Writing tests without UI noise kept suggestions relevant and forced me to summarize progress at each handoff.
+- **Lead architect lesson:** AI generates options; you choose between them. A method can be correct and still be in the wrong class. That judgment is yours — it can't be delegated.
 
 ---
 
@@ -135,13 +157,22 @@ Answer:
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+61 tests across 12 classes covering every core behavior:
+
+- **Sorting** — priority-first, time-first, priority-time, tiebreak at same `due_time`
+- **Recurrence** — daily/weekly next occurrence; one-off returns `None`; `ValueError` on missing/done task
+- **Conflict detection** — overlaps, same start, back-to-back, `[SAME PET]`/`[DIFFERENT PETS]` labels, untimed ignored
+- **Knapsack** — exact fit, over-budget, optimal beats greedy, sort order preserved
+- **Suggest slot** — gaps before/between/after tasks, too-small gap skipped, `search_from`, untimed ignored
+- **Priority labels** — all five score values map to correct emoji label
+- **Plan output** — `summary()` and `to_dict()` field correctness
+- **Edge cases** — empty pet, no pets, `budget=0`, weekly with no `recur_day`
+
+These matter because silent failures are the worst kind. A wrong sort produces a wrong plan with no error.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+**61/61 passing.** Clock-dependent tests use mocked time so results are deterministic. Remaining gap: no stress test with large task volumes. The knapsack is O(n × budget) — ~24,000 ops for n=50, budget=480 — but conflict detection is O(n²) and could slow at scale.
 
 ---
 
@@ -149,12 +180,15 @@ Answer:
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The test suite. Writing each test forced precision about what a method was *supposed* to do — not just what it happened to do. The `is_overdue()` mock was the standout: I didn't know how to test wall-clock-dependent code until I had to, and figuring it out was the most useful thing I learned about testable design.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+Both gaps from the initial reflection were fixed:
+
+- **Greedy → knapsack:** `fit_tasks` now uses 0/1 DP and finds the provably optimal selection. No performance cost for daily planner scale.
+- **Persistence:** `Owner.save_to_json()` / `load_from_json()` with atomic writes. Data survives page refreshes.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+Treat AI like a pull request, not a compiler. Read it critically, accept what fits, modify what's close, reject what's wrong. The decision is always yours. If you can't explain why a method works the way it does, you don't own the code — you're just hosting it.

@@ -1,0 +1,36 @@
+{
+  "name": "Jordan",
+  "email": "jordan@example.com",
+  "available_minutes_per_day": 90,
+  "pets": [
+    {
+      "name": "Mochi",
+      "species": "dog",
+      "age": 3,
+      "tasks": [
+        {
+          "name": "Morning walk",
+          "category": "walk",
+          "duration_minutes": 30,
+          "priority": 5,
+          "is_complete": false,
+          "due_time": "07:00",
+          "recurrence": "daily",
+          "recur_day": null,
+          "due_date": null
+        },
+        {
+          "name": "Meds",
+          "category": "meds",
+          "duration_minutes": 5,
+          "priority": 5,
+          "is_complete": false,
+          "due_time": "08:00",
+          "recurrence": null,
+          "recur_day": null,
+          "due_date": "2026-03-29"
+        }
+      ]
+    }
+  ]
+}
