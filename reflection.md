@@ -92,10 +92,28 @@ classDiagram
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+Answer:
+ The scheduler juggles four main constraints. The first and most important is the owner's time budget — whatever number of minutes Jordan has available that day is a hard ceiling. No task gets squeezed in halfway; if it doesn't fit, it gets skipped entirely. That felt like the right call because real life doesn't let you half-walk a dog.
+
+ The second constraint is priority. Every task gets a score from 1 to 5, and the scheduler respects that order when deciding what makes the cut. This matters because not all pet care is equal — a missed medication is genuinely harmful, while skipping playtime is just a little sad.
+
+ Third is the deadline, which is the `due_time` field on each task. When the strategy is set to "time-first," the scheduler uses Earliest Deadline First — tasks with the closest due time go first, and tasks with no due time at all float to the bottom. This was added because two priority-5 tasks can still conflict if one needs to happen at 8am and the other at 5pm.
+
+ Finally, completion status acts as a filter. Tasks already marked done are silently skipped by default, so the budget isn't wasted on things the owner already handled.
+
+ The order those constraints were added actually mirrors how important they are. Time came first because it's the only truly non-negotiable one. Priority came next because care tasks aren't interchangeable. Deadlines came after that as a finer-grained version of priority. And completion status was the last piece — more of a cleanup rule than a real ranking.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
+
+Answer:
+ The biggest tradeoff is that `fit_tasks` is greedy — it works down the sorted list and locks in each task the moment it fits, without ever looking ahead. That means it can fill the budget with several medium-length tasks and then have no room left for a short but important one that appears later in the list.
+
+ For example, if three 25-minute tasks consume 75 of Jordan's 90 available minutes, a 20-minute high-priority task that comes next gets skipped — even though swapping one of the earlier tasks out would have made room for it.
+
+ That said, the tradeoff is reasonable here for two reasons. First, the list is already sorted by priority before any fitting happens, so the tasks most likely to be important are considered first. The greedy approach only causes a problem when priorities are close together, which is the exception rather than the rule in a typical pet care day. Second, the alternative — trying every possible combination to find the optimal set — gets computationally expensive fast and adds complexity that would be hard to explain to a user. For a daily pet care planner, "good enough, fast, and transparent" beats "perfect but slow."
 
 ---
 
